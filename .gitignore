@@ -11,3 +11,6 @@ wheels/
 
 
 .env
+
+# Eval run artifacts (queries.yaml and harness stay versioned)
+evals/baselines/

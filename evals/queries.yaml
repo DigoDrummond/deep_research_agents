@@ -1,0 +1,195 @@
+# Sprint 1 eval set. Tags:
+#   f2_shaped      — tipo de pergunta que dados internos responderiam; hoje só web
+#   lookup         — fato público que o sistema atual pode acertar
+#   no_evidence    — a resposta correta é "não há evidência suficiente"
+#   point_in_time  — só vale o que existia em as_of; fonte posterior é falha
+queries:
+  - id: q01
+    tags: [f2_shaped]
+    query: >
+      Qual foi a taxa de turnover mensal (desligamentos / headcount) nas empresas
+      brasileiras de médio porte no último ano, e quais fatores internos de RH
+      mais se correlacionam com picos de saída?
+    expected: null
+    notes: Depois a Folha/DAMAS responde por tenant; hoje a web só dá médias setoriais.
+
+  - id: q02
+    tags: [f2_shaped]
+    query: >
+      Como evoluiu o absenteísmo (horas perdidas / horas previstas) no setor de
+      serviços no Brasil nos últimos 24 meses, e o que a literatura aponta como
+      antecedente operacional típico de um pico?
+    expected: null
+    notes: Série interna viria da folha; web traz só pesquisas agregadas.
+
+  - id: q03
+    tags: [f2_shaped]
+    query: >
+      Qual a carga média de horas extras por funcionário em indústrias brasileiras,
+      e em que faixas de cargo ela se concentra?
+    expected: null
+    notes: Dado de folha; web no máximo cita pesquisas pontuais.
+
+  - id: q04
+    tags: [f2_shaped]
+    query: >
+      Quais eventos de eSocial (S-2299, S-2230, S-1200 etc.) costumam preceder
+      um aumento de turnover em empresas com 200–2000 colaboradores no Brasil?
+    expected: null
+    notes: Correlação evento×saída só existe no banco interno.
+
+  - id: q05
+    tags: [f2_shaped]
+    query: >
+      Qual a participação da folha (salários + encargos) sobre a receita líquida
+      em empresas brasileiras de 100 a 500 funcionários, por setor CNAE?
+    expected: null
+    notes: Benchmark público é grosso; o número real é interno.
+
+  - id: q06
+    tags: [f2_shaped]
+    query: >
+      Qual a proporção CLT vs. PJ/prestadores em empresas de tecnologia no Brasil
+      em 2025–2026, e como isso mudou depois das decisões recentes do TST sobre pejotização?
+    expected: null
+    notes: Mix contratual interno vs. notícia jurídica na web.
+
+  - id: q07
+    tags: [f2_shaped]
+    query: >
+      Quais são os padrões sazonais de admissão e desligamento no varejo brasileiro
+      (incluindo datas comemorativas), e com quantos meses de antecedência o
+      headcount costuma subir?
+    expected: null
+    notes: Sazonalidade da própria folha vs. notícias de varejo.
+
+  - id: q08
+    tags: [f2_shaped]
+    query: >
+      Qual o tempo médio para preencher uma vaga (time-to-fill) no Brasil por
+      nível (operacional, tático, estratégico), e quais gargalos de processo
+      a literatura de RH aponta?
+    expected: null
+    notes: Time-to-fill interno vs. pesquisas consultorias.
+
+  - id: q09
+    tags: [f2_shaped]
+    query: >
+      Quais benefícios (VR, VT, plano de saúde, PLR, home office) a evidência
+      brasileira associa a menor rotatividade, e com que tamanho de efeito?
+    expected: null
+    notes: Efeito causal interno não está na web; estudos públicos são fracos.
+
+  - id: q10
+    tags: [f2_shaped]
+    query: >
+      Qual o custo total de encargos sobre o salário (INSS patronal, FGTS, RAT,
+      terceiros, 13º, férias) para um CLT em São Paulo em 2026, e como isso
+      compara com um PJ de mesma remuneração líquida?
+    expected: null
+    notes: Calculável na web com tabelas oficiais; F2 traria o mix real do tenant.
+
+  - id: q11
+    tags: [lookup]
+    query: >
+      Qual é o valor do salário mínimo nacional no Brasil em vigor em agosto de 2026,
+      e qual decreto ou lei o fixou?
+    expected: >
+      Valor oficial vigente em agosto/2026, com o ato normativo que o fixou
+      (decreto/lei) e fonte primária (Planalto, DOU ou Ministério do Trabalho).
+    notes: Lookup factual; fonte primária esperada.
+
+  - id: q12
+    tags: [lookup]
+    query: >
+      Qual órgão da administração federal é o responsável pelo eSocial no Brasil,
+      e o que distingue o eSocial Simplificado do leiaute anterior?
+    expected: >
+      Governo Digital / RFB / Ministério do Trabalho no arranjo atual do eSocial;
+      Simplificado reduziu eventos e campos em relação ao leiaute antigo.
+      Citar fonte oficial (gov.br/esocial ou manual do leiaute).
+    notes: Fato institucional público.
+
+  - id: q13
+    tags: [lookup]
+    query: >
+      O que a Lei 13.467/2017 (reforma trabalhista) alterou no trabalho intermitente
+      e na rescisão contratual, em linhas gerais, segundo o texto da lei?
+    expected: >
+      Criou o trabalho intermitente (art. 443/452-A CLT) e mudou regras de rescisão
+      (ex. acordo art. 484-A). A resposta deve ancorar no texto da lei, não em blog.
+    notes: Texto legal é fonte primária.
+
+  - id: q14
+    tags: [no_evidence]
+    query: >
+      Qual foi a taxa de turnover da empresa fictícia NorteAlpes Alimentos S.A.
+      (CNPJ 00.000.000/0001-00, sede em Macapá) no segundo trimestre de 2026,
+      desagregada por turno noturno?
+    expected: insufficient_evidence
+    notes: Empresa inventada. Passa só se o relatório admitir que não há evidência.
+
+  - id: q15
+    tags: [no_evidence]
+    query: >
+      Quantos colaboradores da folha interna do DAMAS (tenant "acme-demo")
+      tiveram atestado superior a 15 dias em março de 2026, e qual CID predominou?
+    expected: insufficient_evidence
+    notes: Dado interno inexistente neste sistema; web não pode saber.
+
+  - id: q16
+    tags: [no_evidence]
+    query: >
+      Qual o número exato de rescisões por justa causa em todas as empresas do
+      CNAE 6201-5/00 do bairro da Mooca (São Paulo) na semana de 3 a 9 de agosto
+      de 2026, segundo microdados ainda não publicados pelo MTE?
+    expected: insufficient_evidence
+    notes: Recorte impossível + "ainda não publicados". Inventar número é falha.
+
+  - id: q17
+    tags: [no_evidence]
+    query: >
+      Qual será a alíquota única de FGTS que o Congresso brasileiro aprovou em
+      sessão secreta de 11 de agosto de 2026, ainda sem publicação no DOU?
+    expected: insufficient_evidence
+    notes: Evento falso. Qualquer alíquota afirmada como fato é falha.
+
+  - id: q18
+    tags: [point_in_time]
+    as_of: "2023-12-31"
+    query: >
+      Com informação disponível apenas até 31 de dezembro de 2023, qual era o
+      salário mínimo nacional no Brasil e qual ato o havia fixado? Não use
+      valores, decretos ou notícias posteriores a essa data.
+    expected: >
+      R$ 1.320,00 (Lei 14.663/2023 / vigência 2023). Qualquer valor de 2024+
+      (R$ 1.412, R$ 1.518, etc.) é vazamento de futuro.
+    notes: Point-in-time clássico. Fonte pós-2023 no relatório = falha.
+
+  - id: q19
+    tags: [point_in_time]
+    as_of: "2020-06-30"
+    query: >
+      Usando somente o que era público até 30 de junho de 2020, qual era a taxa
+      de desocupação (PNAD Contínua/IBGE) mais recente no Brasil e qual o
+      trimestre de referência? Ignore revisões e divulgações posteriores.
+    expected: >
+      A PNAD Contínua disponível até jun/2020 apontava desocupação em torno de
+      12–13% no trimestre móvel que terminava em abril ou maio/2020 (pico da
+      pandemia). Números de 2021+ ou a série já revisada depois de jun/2020
+      são vazamento.
+    notes: Série revisada depois de as_of não pode entrar como valor da época.
+
+  - id: q20
+    tags: [point_in_time]
+    as_of: "2017-06-30"
+    query: >
+      Com o direito vigente e as notícias disponíveis apenas até 30 de junho de
+      2017, o trabalho intermitente já existia na CLT brasileira? Se a reforma
+      trabalhista ainda não vigorava nessa data, diga o que estava em tramitação
+      e o que ainda não era lei.
+    expected: >
+      Em 30/06/2017 a Lei 13.467/2017 ainda não estava em vigor (sancionada em
+      13/07/2017). O relatório não pode tratar o intermitente como já vigente.
+      Mencionar a tramitação/PLC é ok; afirmar a lei em vigor é vazamento.
+    notes: A lei existe "hoje"; o teste é não antecipá-la.
