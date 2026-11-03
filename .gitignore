@@ -14,3 +14,6 @@ wheels/
 
 # Eval run artifacts (queries.yaml and harness stay versioned)
 evals/baselines/
+
+# On-disk artifact store (sprint 6.3): plan/findings/documents per run_id
+memory/

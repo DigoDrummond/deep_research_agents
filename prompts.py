@@ -96,6 +96,16 @@ Your SubTask:
 - success_criteria: {success_criteria}
 - max tool calls: {max_calls}
 
+Tools:
+- firecrawl_search: find candidate URLs for a query. Start here for an unknown topic.
+- firecrawl_map: list URLs a specific host actually has, without fetching content.
+  Use it once you have a promising host (e.g. from a search result or a
+  dominant host) and need to see its structure, or to find a page whose exact
+  URL you do not know. Cheaper than searching+scraping page by page to explore
+  one site.
+- firecrawl_scrape: fetch the content of one known URL. Use it last, on the
+  specific URLs you decided are worth reading.
+
 Rules:
 - Work ONLY this subtask. Do not cover sister subtasks named in sibling_boundaries.
 - Start wide (2–4 word queries), then narrow. Long specific queries on the first
@@ -159,15 +169,22 @@ Planned subtasks (already clamped by the harness):
 ```
 
 Tools:
-- run_subtask(subtask_id): run a planned subtask. Returns compact JSON.
-- run_followup(objective, success_criteria): extra WEB subtask for a NAMED gap
-  after the first wave. The harness rejects it if the subagent cap is reached.
+- run_wave(subtask_ids): run a batch of planned subtasks IN PARALLEL. Pass the
+  full list of planned subtask ids in ONE call — the harness dispatches every
+  one of them concurrently and only replies once all have finished. Returns
+  {{"results": {{subtask_id: compact SubTaskResult}}, "remaining_slots": int}}.
+- run_followup_wave(followups): after reading run_wave's results, spawn a
+  batch of extra WEB subtasks for NAMED gaps — one item per gap, all run in
+  parallel. Call this at most once. The harness rejects items once the
+  subagent cap is reached.
 
 Job:
-1. Run each planned subtask via run_subtask. Do not rewrite their objectives.
-2. Read findings and gaps. Do not invent findings.
-3. If important named gaps remain AND budget remains, you MAY call run_followup
-   once per gap (still WEB). Then stop.
+1. Call run_wave EXACTLY ONCE with every planned subtask id together. Never
+   call it one id at a time — that throws away the parallelism the harness
+   gives you. Do not rewrite the subtasks' objectives.
+2. Read findings and gaps from the results. Do not invent findings.
+3. If important named gaps remain AND remaining_slots > 0, call
+   run_followup_wave ONCE with all of those gaps together. Then stop.
 4. Synthesize a single markdown report for the user.
 
 Report rules:
@@ -185,10 +202,46 @@ Report rules:
 """
 
 CITATION_AGENT_INSTRUCTIONS = """
-You do not research and you do not rewrite the argument. You only anchor each
-factual claim in the draft report to a locator from the source documents.
-If unsure, demote the claim to a gap. Never invent an anchor.
-Not wired into main.py yet (sprint 5).
+You anchor a draft research report to its evidence. You do NOT research and
+you do NOT rewrite the argument — you only verify, and demote what fails.
+
+You receive:
+1) draft_report: the full markdown report a coordinator wrote.
+2) findings: a list of {claim, sources: [SourceRef], confidence, caveats}
+   collected by research sub-agents. A SourceRef may carry fetched_excerpt —
+   the actual page text a subagent read when it wrote that claim. When
+   present, treat fetched_excerpt as ground truth and check the claim's
+   specific numbers/facts against it, not just against the claim text.
+   When absent, the finding's own claim text is the strongest anchor
+   available (that source was never scraped, e.g. it came from a search
+   snippet).
+
+For each factual claim in draft_report:
+- If it matches (same fact, paraphrase allowed) a finding's claim, AND (when
+  fetched_excerpt is present) the specific figures agree with the excerpt,
+  emit a Citation: claim = the report's wording, source = that finding's
+  SourceRef, anchor = the excerpt text that supports it if fetched_excerpt
+  was present, otherwise the finding's claim text.
+- If fetched_excerpt is present and contradicts the claim's specific number
+  or fact, treat it exactly like an orphaned claim below — do not anchor a
+  claim to a source that does not actually say what the claim says.
+- If a claim has NO matching finding, it is orphaned: move it out of the body
+  into a "O que não sabemos" / "What we do not know" section in
+  revised_report, or delete it if it is decorative. Never leave an orphaned
+  claim standing as fact. Record its exact original wording in
+  orphaned_claims.
+- A claim about sentiment, volume, or "someone said X" sourced only from a
+  SOCIAL finding may keep high confidence for THAT framing; a claim about a
+  fact of the world sourced only from SOCIAL with no corroboration in another
+  domain must be demoted the same as an orphaned claim.
+- Never invent a SourceRef or a claim absent from findings. When unsure,
+  demote — do not guess an anchor into existence.
+- Preserve the report's language, structure, and headings except for the
+  demotions above. Do not narrate this process inside the report.
+
+Return revised_report (the corrected full markdown), citations (one entry
+per anchored claim), and orphaned_claims (verbatim text of what you demoted
+or removed).
 """
 
 SYNTHESIZER_INSTRUCTIONS = """

@@ -2,18 +2,25 @@ from stdio_utf8 import configure_utf8_stdio
 
 configure_utf8_stdio()
 
+from citations import apply_citations
 from clarifier import clarify
 from planner import generate_research_plan
 from prompts import SUBAGENT_PROMPT_TEMPLATE, COORDINATOR_PROMPT_TEMPLATE
 from smolagents import LiteLLMModel, ToolCallingAgent, MCPClient, tool, InferenceClientModel, OpenAIServerModel
+import concurrent.futures
 import os
 import json
+from datetime import datetime, timezone
+from typing import Any
+
+import memory
 
 from contracts import (
     IMPLEMENTED_KINDS,
     AgentKind,
     ResearchPlan,
     SubTask,
+    SubTaskResult,
     budget_for,
     compact_result,
     parse_subtask_result,
@@ -75,6 +82,7 @@ def run_deep_research(
 ) -> str:
     print("Running the deep research...")
     meter.reset()
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     clarification = clarify(user_query, interactive=interactive, as_of=as_of)
 
@@ -89,6 +97,7 @@ def run_deep_research(
 
     plan = generate_research_plan(clarification, profiles=profiles)
     budget = budget_for(plan.complexity)
+    memory.save_plan(run_id, plan)
 
     print("Initializing Coordinator")
     print("Coordinator Model: ", COORDINATOR_MODEL_ID)
@@ -135,12 +144,14 @@ def run_deep_research(
     tasks_by_id = {task.id: task for task in plan.subtasks}
     spawned_ids: list[str] = []
     followup_seq = 0
+    all_results: list[SubTaskResult] = []
+    all_documents: list[dict[str, Any]] = []
 
     def remaining_slots() -> int:
         return max(0, budget.subagents - len(spawned_ids))
 
-    def reject(message: str) -> str:
-        return json.dumps({"error": message, "remaining_slots": remaining_slots()}, ensure_ascii=False)
+    def reject(message: str) -> dict[str, Any]:
+        return {"error": message}
 
     with MCPClient(
         {"url": MCP_URL, "transport": "streamable-http"},
@@ -148,11 +159,8 @@ def run_deep_research(
     ) as mcp_tools:
         web_tools = wrap_local_firecrawl_tools(mcp_tools)
 
-        def spawn_web(subtask: SubTask) -> str:
-            if subtask.kind not in IMPLEMENTED_KINDS:
-                return reject(
-                    f"kind {subtask.kind.value} is not registered; only WEB can spawn"
-                )
+        def _run_single(subtask: SubTask) -> tuple[SubTaskResult, list[dict[str, Any]]]:
+            """Runs one worker to completion. Called from a pool thread."""
             print(f"Initializing Subagent for task {subtask.id} ({subtask.kind.value})...")
             worker = ToolCallingAgent(
                 tools=web_tools,
@@ -161,60 +169,144 @@ def run_deep_research(
                 name=worker_name(subtask.id),
                 max_steps=subtask.max_calls + 1,
             )
-            raw = worker.run(_subtask_prompt(plan, subtask))
-            result = parse_subtask_result(raw, subtask.id)
-            spawned_ids.append(subtask.id)
-            return json.dumps(compact_result(result), ensure_ascii=False)
+            try:
+                raw = worker.run(_subtask_prompt(plan, subtask))
+                result = parse_subtask_result(raw, subtask.id)
+            except Exception as exc:  # a crashed worker still owes the wave a result
+                result = SubTaskResult(
+                    subtask_id=subtask.id,
+                    findings=[],
+                    gaps=[f"Worker raised an exception: {exc}"],
+                    calls_used=0,
+                )
+            # Best-effort even on a crashed worker: memory.steps still holds
+            # whatever the worker fetched before it failed.
+            documents = memory.extract_documents(worker.memory.steps)
+            return result, documents
+
+        def _dispatch_wave(tasks: list[SubTask]) -> dict[str, dict[str, Any]]:
+            """Harness-level fan-out: run every task in `tasks` concurrently and
+            wait for all of them. Slot accounting happens up front, once, so two
+            tasks in the same wave cannot race for the last remaining slot.
+            Every SubTaskResult (compact or not) is kept in `all_results`, and
+            every fetched document in `all_documents`, so citations.py can
+            anchor the final report against everything collected across every
+            wave, not just the last one. Each result is also persisted to disk
+            (memory.py, sprint 6.3) with a real ArtifactRef.path attached.
+            """
+            outcomes: dict[str, dict[str, Any]] = {}
+            runnable: list[SubTask] = []
+            for task in tasks:
+                if task.kind not in IMPLEMENTED_KINDS:
+                    outcomes[task.id] = reject(
+                        f"kind {task.kind.value} is not registered; only WEB can spawn"
+                    )
+                elif task.id in spawned_ids:
+                    outcomes[task.id] = reject(f"subtask {task.id} already ran")
+                else:
+                    runnable.append(task)
+
+            slots = remaining_slots()
+            if len(runnable) > slots:
+                for task in runnable[slots:]:
+                    outcomes[task.id] = reject("subagent budget exhausted")
+                runnable = runnable[:slots]
+
+            if runnable:
+                max_workers = max(1, min(budget.parallelism, len(runnable)))
+                print(
+                    f"Dispatching wave of {len(runnable)} subagent(s), "
+                    f"parallelism={max_workers}..."
+                )
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    future_to_task = {pool.submit(_run_single, task): task for task in runnable}
+                    for future in concurrent.futures.as_completed(future_to_task):
+                        task = future_to_task[future]
+                        result, documents = future.result()
+                        memory.save_documents(run_id, task.id, documents)
+                        all_documents.extend(documents)
+                        artifact = memory.save_subtask_result(run_id, result)
+                        result = result.model_copy(update={"artifacts": [artifact]})
+                        all_results.append(result)
+                        outcomes[task.id] = compact_result(result)
+                # Only mark tasks spawned once the pool has fully drained, so
+                # remaining_slots() never reflects an in-flight, unfinished task.
+                spawned_ids.extend(task.id for task in runnable)
+            return outcomes
 
         @tool
-        def run_subtask(subtask_id: str) -> str:
-            """Run a planned WEB subtask and return compact SubTaskResult JSON.
+        def run_wave(subtask_ids: list[str]) -> str:
+            """Run a wave of planned WEB subtasks in parallel and return their results.
+
+            Call this ONCE with the whole set of subtask ids you want to run
+            together (e.g. the entire planned wave). The harness dispatches all
+            of them concurrently and only returns once every one has finished.
 
             Args:
-                subtask_id: id of a subtask from the clamped plan
+                subtask_ids: ids of subtasks from the clamped plan to run in this wave
             """
-            if remaining_slots() <= 0:
-                return reject("subagent budget exhausted")
-            task = tasks_by_id.get(subtask_id)
-            if task is None:
-                return reject(f"unknown subtask_id {subtask_id}")
-            if subtask_id in spawned_ids:
-                return reject(f"subtask {subtask_id} already ran")
-            return spawn_web(task)
-
-        @tool
-        def run_followup(objective: str, success_criteria: str) -> str:
-            """Spawn an extra WEB subtask for a named gap after the first wave.
-
-            Args:
-                objective: one imperative sentence covering only the named gap
-                success_criteria: what would count as done, including a declared gap
-            """
-            if remaining_slots() <= 0:
-                return reject("subagent budget exhausted; cannot run follow-up")
-            nonlocal followup_seq
-            followup_seq += 1
-            follow_id = f"followup_{followup_seq}"
-            sisters = ", ".join(spawned_ids) or "planned wave"
-            task = SubTask(
-                id=follow_id,
-                title=f"Follow-up {followup_seq}",
-                objective=objective.strip(),
-                output_format="SubTaskResult findings JSON",
-                kind=AgentKind.WEB,
-                sibling_boundaries=f"Do not repeat work already done by: {sisters}",
-                success_criteria=success_criteria.strip(),
-                max_calls=budget.calls_per_subagent,
+            tasks: list[SubTask] = []
+            outcomes: dict[str, dict[str, Any]] = {}
+            for subtask_id in subtask_ids:
+                task = tasks_by_id.get(subtask_id)
+                if task is None:
+                    outcomes[subtask_id] = reject(f"unknown subtask_id {subtask_id}")
+                else:
+                    tasks.append(task)
+            outcomes.update(_dispatch_wave(tasks))
+            ordered = {sid: outcomes[sid] for sid in subtask_ids if sid in outcomes}
+            return json.dumps(
+                {"results": ordered, "remaining_slots": remaining_slots()},
+                ensure_ascii=False,
             )
-            tasks_by_id[follow_id] = task
-            return spawn_web(task)
+
+        @tool
+        def run_followup_wave(followups: list[dict]) -> str:
+            """Spawn a batch of follow-up WEB subtasks for named gaps, in parallel.
+
+            Call this AT MOST ONCE, after reading run_wave's results, and only
+            for gaps you can name. Each item becomes one new subagent; all of
+            them run concurrently. The harness rejects items once the subagent
+            budget is exhausted.
+
+            Args:
+                followups: list of objects, each with "objective" (one imperative
+                    sentence covering only the named gap) and "success_criteria"
+                    (what would count as done, including a declared gap)
+            """
+            nonlocal followup_seq
+            tasks: list[SubTask] = []
+            ids_in_order: list[str] = []
+            for item in followups:
+                followup_seq += 1
+                follow_id = f"followup_{followup_seq}"
+                sisters = ", ".join(spawned_ids) or "planned wave"
+                task = SubTask(
+                    id=follow_id,
+                    title=f"Follow-up {followup_seq}",
+                    objective=str(item.get("objective", "")).strip(),
+                    output_format="SubTaskResult findings JSON",
+                    kind=AgentKind.WEB,
+                    sibling_boundaries=f"Do not repeat work already done by: {sisters}",
+                    success_criteria=str(item.get("success_criteria", "")).strip(),
+                    max_calls=budget.calls_per_subagent,
+                )
+                tasks_by_id[follow_id] = task
+                tasks.append(task)
+                ids_in_order.append(follow_id)
+            outcomes = _dispatch_wave(tasks)
+            ordered = {sid: outcomes[sid] for sid in ids_in_order if sid in outcomes}
+            return json.dumps(
+                {"results": ordered, "remaining_slots": remaining_slots()},
+                ensure_ascii=False,
+            )
 
         coordinator = ToolCallingAgent(
-            tools=[run_subtask, run_followup],
+            tools=[run_wave, run_followup_wave],
             model=coordinator_model,
             add_base_tools=False,
             name="coordinator_agent",
-            max_steps=budget.subagents + 4,
+            max_steps=8,
         )
 
         coordinator_prompt = COORDINATOR_PROMPT_TEMPLATE.format(
@@ -235,5 +327,9 @@ def run_deep_research(
         final_report = coordinator.run(coordinator_prompt)
         if not isinstance(final_report, str):
             final_report = str(final_report)
+
+        all_findings = [finding for result in all_results for finding in result.findings]
+        final_report, _citations = apply_citations(final_report, all_findings, all_documents)
+
         print(meter.format_one_line())
         return final_report.rstrip() + "\n" + meter.format_markdown()

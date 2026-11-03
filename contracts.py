@@ -123,6 +123,20 @@ class ArtifactRef(BaseModel):
     path: str | None = None
 
 
+class Citation(BaseModel):
+    """Produced by CitationAgent (sprint 6.4), never by the synthesizer or a
+    subagent. Anchors one claim in the FINAL report to a source. `anchor` is
+    the strongest evidence text available for that source today: the
+    Finding.claim that carried the SourceRef. Once memory.py (sprint 6.3)
+    persists raw fetched documents, `anchor` should become a literal excerpt
+    from that document instead.
+    """
+
+    claim: str
+    source: SourceRef
+    anchor: str
+
+
 class SubTask(BaseModel):
     id: str
     title: str
@@ -459,5 +473,59 @@ RESEARCH_PLAN_JSON_SCHEMA = {
             "domains_skipped",
             "subtasks",
         ],
+    },
+}
+
+_SOURCE_REF_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "domain": {
+            "type": "string",
+            "enum": ["WEB", "SOCIAL", "DOCS", "TIMESERIES", "TABULAR"],
+        },
+        "locator": {"type": "string"},
+        "title": {"type": "string"},
+        "collected_at": {"type": ["string", "null"]},
+        "published_at": {"type": ["string", "null"]},
+        "quality": {"type": "string", "enum": ["primary", "secondary", "unknown"]},
+    },
+    "required": ["domain", "locator", "title", "collected_at", "published_at", "quality"],
+}
+
+CITATION_JSON_SCHEMA = {
+    "name": "citationVerdict",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "revised_report": {
+                "type": "string",
+                "description": (
+                    "Full corrected markdown report: same as the draft, except "
+                    "orphaned claims are demoted to 'what we do not know' or removed."
+                ),
+            },
+            "citations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "claim": {"type": "string"},
+                        "source": _SOURCE_REF_JSON_SCHEMA,
+                        "anchor": {"type": "string"},
+                    },
+                    "required": ["claim", "source", "anchor"],
+                },
+            },
+            "orphaned_claims": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Verbatim text of claims demoted or removed for lacking an anchor.",
+            },
+        },
+        "required": ["revised_report", "citations", "orphaned_claims"],
     },
 }

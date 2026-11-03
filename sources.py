@@ -29,7 +29,7 @@ from contracts import (
 )
 
 DEFAULT_FIRECRAWL_API_URL = "http://localhost:3002"
-WEB_ALLOWED_TOOLS = ["firecrawl_search", "firecrawl_scrape"]
+WEB_ALLOWED_TOOLS = ["firecrawl_search", "firecrawl_scrape", "firecrawl_map"]
 # Firecrawl search usually caps ~20 per call; use that to fill the map faster.
 _RECON_LIMIT_PER_QUERY = 20
 
